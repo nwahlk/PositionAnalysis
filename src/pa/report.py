@@ -13,6 +13,7 @@ from pa.analyzer import (
     PortfolioAdvice, PortfolioOverview, StockAnalysis, WealthAnalysis,
 )
 from pa.fetcher import FundMarketData, StockMarketData
+from pa.portfolio_theory import AllocationAdvice
 
 
 def _fmt_money(v: float) -> str:
@@ -46,6 +47,99 @@ def generate_report(
 
 
 # ── 公共格式化 ──────────────────────────────────────────────
+
+def _fmt_allocation_advice(advice: AllocationAdvice | None) -> dict | None:
+    """格式化资产配置建议数据，供模板使用"""
+    if advice is None:
+        return None
+
+    cls_names = {"equity": "权益类", "fixed_income": "固收类", "cash_like": "现金类", "alternative": "另类"}
+    saa_rows = []
+    for key, label in cls_names.items():
+        target = getattr(advice.saa_target, f"{key}_pct", 0)
+        current = getattr(advice.saa_current, f"{key}_pct", 0)
+        dev = getattr(advice.saa_deviation, f"{key}_pct", 0)
+        saa_rows.append({
+            "cls": label,
+            "target": f"{target:.0%}",
+            "current": f"{current:.0%}",
+            "deviation": f"{dev:+.0%}",
+            "dev_positive": dev >= 0,
+        })
+
+    # 相关性警告
+    corr_warnings = []
+    if advice.correlation and advice.correlation.high_corr_pairs:
+        for a_name, b_name, corr_val in advice.correlation.high_corr_pairs:
+            corr_warnings.append(f"{a_name} vs {b_name}: 相关系数 {corr_val:.2f}")
+
+    # 风险贡献
+    risk_rows = []
+    if advice.risk_budget and advice.risk_budget.asset_risk_contribution:
+        for name, rc in sorted(
+            advice.risk_budget.asset_risk_contribution.items(),
+            key=lambda x: x[1], reverse=True
+        ):
+            risk_rows.append({
+                "name": name,
+                "rc_pct": f"{rc:.1%}",
+                "bar_width": max(int(rc * 100), 2),
+            })
+
+    # 基准对比
+    benchmark_rows = []
+    for b in advice.benchmarks:
+        benchmark_rows.append({
+            "name": b.benchmark_name,
+            "portfolio_return": f"{b.portfolio_return:.2%}",
+            "benchmark_return": f"{b.benchmark_return:.2%}",
+            "alpha": f"{b.alpha:+.2%}",
+            "alpha_positive": b.alpha >= 0,
+        })
+
+    # 情景分析
+    scenario_rows = []
+    for s in advice.scenarios:
+        scenario_rows.append({
+            "name": s.scenario_name,
+            "return_str": f"{s.estimated_return:+.2%}",
+            "drawdown_str": f"{s.estimated_drawdown:.2%}",
+            "description": s.description,
+        })
+
+    # 全天候评分等级
+    score = advice.all_weather_score
+    if score >= 80:
+        score_level = "优秀"
+        score_color = "#27ae60"
+    elif score >= 60:
+        score_level = "良好"
+        score_color = "#2ecc71"
+    elif score >= 40:
+        score_level = "一般"
+        score_color = "#f39c12"
+    elif score >= 20:
+        score_level = "较差"
+        score_color = "#e67e22"
+    else:
+        score_level = "危险"
+        score_color = "#e74c3c"
+
+    return {
+        "saa_rows": saa_rows,
+        "all_weather_score": f"{score:.0f}",
+        "all_weather_level": score_level,
+        "all_weather_color": score_color,
+        "corr_warnings": corr_warnings,
+        "risk_rows": risk_rows,
+        "benchmark_rows": benchmark_rows,
+        "scenario_rows": scenario_rows,
+        "rebalance_actions": advice.rebalance_actions,
+        "value_signals": advice.value_signals,
+        "cost_warnings": advice.cost_warnings,
+        "theory_summary": advice.theory_summary,
+    }
+
 
 def _fmt_deposit(d: DepositAnalysis) -> dict:
     return {
@@ -99,6 +193,7 @@ def _generate_markdown(result: AnalysisResult, output_dir: str) -> str:
         "advice_actions": advice.actions,
         "risk_warnings": advice.risk_warnings,
         "allocation_mermaid": allocation_mermaid,
+        "allocation_advice": _fmt_allocation_advice(result.allocation_advice),
         "funds": [_fmt_fund_md(f) for f in result.funds],
         "stocks": [_fmt_stock_md(s) for s in result.stocks],
         "deposits": [_fmt_deposit(d) for d in result.deposits],
@@ -188,6 +283,9 @@ def _generate_html(
         "pnl_chart": pnl_chart,
         "fund_trend_chart": fund_trend_chart,
         "stock_trend_chart": stock_trend_chart,
+        "saa_chart": _chart_saa(result.allocation_advice),
+        "risk_chart": _chart_risk_contribution(result.allocation_advice),
+        "allocation_advice": _fmt_allocation_advice(result.allocation_advice),
         "funds": [_fmt_fund_html(f) for f in result.funds],
         "stocks": [_fmt_stock_html(s) for s in result.stocks],
         "deposits": [_fmt_deposit(d) for d in result.deposits],
@@ -339,4 +437,48 @@ def _chart_stock_trend(result: AnalysisResult, stock_data: list[StockMarketData]
     else:
         fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=200)
         fig.add_annotation(text="暂无历史数据", showarrow=False)
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def _chart_saa(advice) -> str:
+    """SAA 目标 vs 实际配置对比柱状图"""
+    fig = go.Figure()
+    cls_names = {"equity": "权益类", "fixed_income": "固收类", "cash_like": "现金类", "alternative": "另类"}
+    if not advice:
+        fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=200)
+        fig.add_annotation(text="暂无配置数据", showarrow=False)
+        return fig.to_html(full_html=False, include_plotlyjs=False)
+
+    categories = list(cls_names.values())
+    targets = [getattr(advice.saa_target, f"{k}_pct", 0) * 100 for k in cls_names]
+    currents = [getattr(advice.saa_current, f"{k}_pct", 0) * 100 for k in cls_names]
+
+    fig.add_trace(go.Bar(name="目标配置", x=categories, y=targets, marker_color="#3498db"))
+    fig.add_trace(go.Bar(name="实际配置", x=categories, y=currents, marker_color="#e67e22"))
+    fig.update_layout(
+        barmode="group", margin=dict(t=10, b=40, l=50, r=0), height=300,
+        yaxis_title="占比 (%)", legend=dict(orientation="h", y=-0.15),
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def _chart_risk_contribution(advice) -> str:
+    """风险贡献分布图"""
+    fig = go.Figure()
+    if not advice or not advice.risk_budget or not advice.risk_budget.asset_risk_contribution:
+        fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=200)
+        fig.add_annotation(text="暂无风险数据", showarrow=False)
+        return fig.to_html(full_html=False, include_plotlyjs=False)
+
+    rc = advice.risk_budget.asset_risk_contribution
+    names = [n[:8] for n in rc]
+    values = [v * 100 for v in rc.values()]
+    colors = ["#e74c3c" if v > 15 else "#f39c12" if v > 10 else "#3498db" for v in values]
+
+    fig.add_trace(go.Bar(x=names, y=values, marker_color=colors))
+    fig.update_layout(
+        margin=dict(t=10, b=60, l=50, r=0), height=300,
+        yaxis_title="风险贡献 (%)",
+        xaxis=dict(tickangle=30),
+    )
     return fig.to_html(full_html=False, include_plotlyjs=False)

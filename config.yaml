@@ -7,10 +7,27 @@ cache_dir: "./.cache"
 cache_max_age_hours: 4
 # 无风险利率（用于夏普比率计算）
 risk_free_rate: 0.015
-# 建议阈值
+
+# 用户风险画像
+risk_profile:
+  age: 40
+  investment_horizon_years: 10
+  risk_tolerance: "moderate"       # conservative / moderate / aggressive
+  max_drawdown_tolerance: 0.15
+
+# 基准配置
+benchmark:
+  equity_index: "sh000300"         # 沪深300
+  bond_index: "sh000012"           # 中证全债
+  blend_ratio: 0.5                 # 混合基准中权益占比
+
+# 建议阈值（单标的评分）
 recommendation:
-  high_loss_threshold: -0.20    # 亏损超过20%触发卖出审查
+  high_loss_threshold: -0.20
   moderate_loss_threshold: -0.10
-  pe_overvalued_ratio: 1.5      # PE > 1.5x行业 -> 高估
-  pe_undervalued_ratio: 0.8     # PE < 0.8x行业 -> 低估
-  concentration_threshold: 0.30 # 单一资产 > 30% -> 降低集中度
+  concentration_threshold: 0.30
+
+# 高级分析参数
+advanced:
+  correlation_threshold: 0.80
+  rebalance_threshold: 0.05

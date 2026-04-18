@@ -43,6 +43,84 @@ pie title 资产配置
 {% endfor %}
 ```
 
+{% if allocation_advice %}
+---
+
+## 资产配置建议
+
+> 基于六大投资理念的综合评估：Dalio 全天候、Swensen 耶鲁模型、Bogle 指数投资、Graham/Buffett 价值投资、Markowitz 现代组合理论、风险预算
+
+### 全天候适配度评分
+
+**{{ allocation_advice.all_weather_score }}/100（{{ allocation_advice.all_weather_level }}）**
+
+{{ allocation_advice.theory_summary }}
+
+### 战略资产配置（SAA）
+
+| 资产类别 | 目标配置 | 实际配置 | 偏差 |
+|:-------:|:-------:|:-------:|:----:|
+{% for r in allocation_advice.saa_rows -%}
+| {{ r.cls }} | {{ r.target }} | {{ r.current }} | {{ r.deviation }} |
+{% endfor %}
+
+{% if allocation_advice.rebalance_actions %}
+### 再平衡建议
+{% for a in allocation_advice.rebalance_actions -%}
+- {{ a }}
+{% endfor %}
+{% endif %}
+
+{% if allocation_advice.corr_warnings %}
+### 相关性警告（伪分散检测）
+{% for w in allocation_advice.corr_warnings -%}
+- ⚠️ {{ w }}
+{% endfor %}
+{% endif %}
+
+{% if allocation_advice.risk_rows %}
+### 风险贡献分析
+{% for r in allocation_advice.risk_rows -%}
+- {{ r.name }}: 贡献组合 **{{ r.rc_pct }}** 的风险
+{% endfor %}
+{% endif %}
+
+{% if allocation_advice.benchmark_rows %}
+### 业绩基准对比
+
+| 基准 | 组合收益 | 基准收益 | Alpha |
+|:----:|:-------:|:-------:|:-----:|
+{% for b in allocation_advice.benchmark_rows -%}
+| {{ b.name }} | {{ b.portfolio_return }} | {{ b.benchmark_return }} | {{ b.alpha }} |
+{% endfor %}
+{% endif %}
+
+{% if allocation_advice.scenario_rows %}
+### 情景分析
+
+| 情景 | 预估收益 | 预估回撤 | 说明 |
+|:----:|:-------:|:-------:|:-----|
+{% for s in allocation_advice.scenario_rows -%}
+| {{ s.name }} | {{ s.return_str }} | {{ s.drawdown_str }} | {{ s.description }} |
+{% endfor %}
+{% endif %}
+
+{% if allocation_advice.value_signals %}
+### 价值信号
+{% for v in allocation_advice.value_signals -%}
+- {{ v }}
+{% endfor %}
+{% endif %}
+
+{% if allocation_advice.cost_warnings %}
+### 成本提醒
+{% for c in allocation_advice.cost_warnings -%}
+- ⚠️ {{ c }}
+{% endfor %}
+{% endif %}
+
+{% endif %}
+
 ---
 
 {% if funds %}

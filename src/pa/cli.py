@@ -68,11 +68,12 @@ def analyze(ctx: click.Context, data_dir: str | None, output_dir: str | None,
 
     # 2. 获取市场数据
     click.echo("\n获取实时行情数据...")
-    fund_data, stock_data = fetch_all_data(snapshot, cache_dir, cache_max_age)
+    fund_data, stock_data, benchmark_data = fetch_all_data(snapshot, cache_dir, cache_max_age)
 
     # 3. 运行分析
     click.echo("\n分析中...")
-    result = analyze_portfolio(snapshot, fund_data, stock_data, risk_free_rate)
+    result = analyze_portfolio(snapshot, fund_data, stock_data, risk_free_rate,
+                               config=cfg, benchmark_data=benchmark_data)
 
     o = result.overview
     click.echo(f"  总资产: {o.total_value:,.2f}")
@@ -112,7 +113,7 @@ def fetch(ctx: click.Context, data_dir: str | None) -> None:
 
     snapshot = snapshots[-1]
     click.echo(f"获取 {snapshot.date} 的行情数据...")
-    fetch_all_data(snapshot, cache_dir, cache_max_age)
+    fetch_all_data(snapshot, cache_dir, cache_max_age)  # noqa: F841 (benchmark also fetched)
     click.echo("完成。数据已缓存。")
 
 

@@ -182,7 +182,129 @@
             <div class="value">{{ asset_count }}</div>
             <div class="sub">{{ asset_detail }}</div>
         </div>
+        {% if allocation_advice %}
+        <div class="stat-card">
+            <div class="label">全天候适配度</div>
+            <div class="value" style="color: {{ allocation_advice.all_weather_color }}">{{ allocation_advice.all_weather_score }}/100</div>
+            <div class="sub">{{ allocation_advice.all_weather_level }}</div>
+        </div>
+        {% endif %}
     </div>
+
+    {% if allocation_advice %}
+    <!-- 资产配置建议 -->
+    <div class="section">
+        <h3>资产配置建议</h3>
+        <p style="font-size: 13px; color: #666; margin-bottom: 16px;">
+            基于 Dalio 全天候、Swensen 耶鲁模型、Bogle 指数投资、Graham/Buffett 价值投资、Markowitz MPT、风险预算 六大投资理念
+        </p>
+
+        <!-- SAA 对比图 + 风险贡献图 -->
+        <div class="charts-grid" style="margin-bottom: 20px;">
+            <div class="chart-card">
+                <h3>战略资产配置（目标 vs 实际）</h3>
+                {{ saa_chart|safe }}
+            </div>
+            <div class="chart-card">
+                <h3>风险贡献分布</h3>
+                {{ risk_chart|safe }}
+            </div>
+        </div>
+
+        <!-- SAA 偏差表格 -->
+        <table style="margin-bottom: 20px;">
+            <thead><tr><th>资产类别</th><th>目标配置</th><th>实际配置</th><th>偏差</th></tr></thead>
+            <tbody>
+                {% for r in allocation_advice.saa_rows %}
+                <tr>
+                    <td>{{ r.cls }}</td><td>{{ r.target }}</td><td>{{ r.current }}</td>
+                    <td class="{{ 'profit-text' if r.dev_positive else 'loss-text' }}">{{ r.deviation }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        {% if allocation_advice.theory_summary %}
+        <div class="advice-box" style="margin-bottom: 16px;">
+            <div style="font-size: 14px; color: #333;">{{ allocation_advice.theory_summary }}</div>
+        </div>
+        {% endif %}
+
+        {% if allocation_advice.rebalance_actions %}
+        <div style="margin-bottom: 16px;">
+            <strong>再平衡建议：</strong>
+            <ul style="margin-top: 8px; padding-left: 20px; font-size: 13px;">
+                {% for a in allocation_advice.rebalance_actions %}
+                <li>{{ a }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        {% if allocation_advice.corr_warnings %}
+        <div style="margin-bottom: 16px;">
+            <strong style="color: #c0392b;">相关性警告（伪分散检测）：</strong>
+            <ul style="margin-top: 8px; padding-left: 20px; font-size: 13px;">
+                {% for w in allocation_advice.corr_warnings %}
+                <li style="color: #c0392b;">{{ w }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        {% if allocation_advice.benchmark_rows %}
+        <table style="margin-bottom: 20px;">
+            <thead><tr><th>基准</th><th>组合收益</th><th>基准收益</th><th>Alpha</th></tr></thead>
+            <tbody>
+                {% for b in allocation_advice.benchmark_rows %}
+                <tr>
+                    <td>{{ b.name }}</td><td>{{ b.portfolio_return }}</td><td>{{ b.benchmark_return }}</td>
+                    <td class="{{ 'profit-text' if b.alpha_positive else 'loss-text' }}">{{ b.alpha }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% if allocation_advice.scenario_rows %}
+        <table style="margin-bottom: 20px;">
+            <thead><tr><th>情景</th><th>预估收益</th><th>预估回撤</th><th>说明</th></tr></thead>
+            <tbody>
+                {% for s in allocation_advice.scenario_rows %}
+                <tr>
+                    <td>{{ s.name }}</td>
+                    <td class="{{ 'profit-text' if s.return_str[0] == '+' else 'loss-text' }}">{{ s.return_str }}</td>
+                    <td>{{ s.drawdown_str }}</td>
+                    <td style="font-size: 12px; color: #666;">{{ s.description }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% if allocation_advice.value_signals %}
+        <div style="margin-bottom: 12px;">
+            <strong>价值信号：</strong>
+            <ul style="margin-top: 4px; padding-left: 20px; font-size: 13px;">
+                {% for v in allocation_advice.value_signals %}
+                <li>{{ v }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        {% if allocation_advice.cost_warnings %}
+        <div style="margin-bottom: 12px;">
+            <strong style="color: #e67e22;">成本提醒：</strong>
+            <ul style="margin-top: 4px; padding-left: 20px; font-size: 13px;">
+                {% for c in allocation_advice.cost_warnings %}
+                <li style="color: #e67e22;">{{ c }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
 
     <!-- 基金详情 -->
     {% if funds %}

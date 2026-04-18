@@ -124,6 +124,7 @@ class AnalysisResult:
     deposits: list[DepositAnalysis]
     wealth_products: list[WealthAnalysis]
     portfolio_advice: PortfolioAdvice
+    allocation_advice: object | None = None  # AllocationAdvice，延迟导入避免循环
 
 
 def analyze_portfolio(
@@ -131,6 +132,8 @@ def analyze_portfolio(
     fund_data: list[FundMarketData],
     stock_data: list[StockMarketData],
     risk_free_rate: float = 0.015,
+    config: dict | None = None,
+    benchmark_data: dict | None = None,
 ) -> AnalysisResult:
     """运行完整组合分析"""
     fund_analyses = _analyze_funds(snapshot.funds, fund_data, risk_free_rate)
@@ -144,7 +147,52 @@ def analyze_portfolio(
     )
 
     # 计算建议评分（需要组合信息做集中度检查）
-    advice = _score_recommendations(fund_analyses, stock_analyses, overview)
+    rec_config = (config or {}).get("recommendation", {})
+    advice = _score_recommendations(fund_analyses, stock_analyses, overview, rec_config)
+
+    # 组合级资产配置分析（基于投资理念）
+    allocation_advice = None
+    if fund_data and config:
+        try:
+            from pa.portfolio_theory import (
+                AllocationAdvice, RiskProfile, run_full_portfolio_analysis,
+            )
+            rp_cfg = config.get("risk_profile", {})
+            profile = RiskProfile(
+                age=rp_cfg.get("age", 40),
+                investment_horizon_years=rp_cfg.get("investment_horizon_years", 10),
+                risk_tolerance=rp_cfg.get("risk_tolerance", "moderate"),
+                max_drawdown_tolerance=rp_cfg.get("max_drawdown_tolerance", 0.15),
+            )
+            nav_histories = {}
+            for d in fund_data:
+                if d.nav_history.empty or len(d.nav_history.columns) < 2:
+                    continue
+                date_col = d.nav_history.columns[0]
+                nav_col = [c for c in d.nav_history.columns if "单位净值" in c]
+                if not nav_col:
+                    nav_col = [d.nav_history.columns[1]]
+                try:
+                    s = d.nav_history.set_index(date_col)[nav_col[0]].astype(float)
+                    nav_histories[d.code] = s
+                except (ValueError, TypeError):
+                    pass
+            price_histories = {}
+            for d in stock_data:
+                if not d.price_history.empty:
+                    cols = [c for c in d.price_history.columns if "收盘" in c]
+                    if cols:
+                        date_col = [c for c in d.price_history.columns if "日期" in c]
+                        if date_col:
+                            s = d.price_history.set_index(date_col[0])[cols[0]].astype(float)
+                            price_histories[d.code] = s
+            allocation_advice = run_full_portfolio_analysis(
+                fund_analyses, stock_analyses, deposit_analyses,
+                wealth_analyses, nav_histories, price_histories,
+                profile, benchmark_data or {}, overview, config,
+            )
+        except Exception as e:
+            print(f"  警告: 资产配置分析失败: {e}")
 
     return AnalysisResult(
         overview=overview,
@@ -153,6 +201,7 @@ def analyze_portfolio(
         deposits=deposit_analyses,
         wealth_products=wealth_analyses,
         portfolio_advice=advice,
+        allocation_advice=allocation_advice,
     )
 
 
@@ -394,6 +443,7 @@ def _score_recommendations(
     funds: list[FundAnalysis],
     stocks: list[StockAnalysis],
     overview: PortfolioOverview,
+    rec_config: dict | None = None,
 ) -> PortfolioAdvice:
     """为每只基金/股票计算建议评分，返回组合级建议"""
     actions: list[str] = []
@@ -415,11 +465,12 @@ def _score_recommendations(
             reasons.append(f"同类排名后{(100-f.rank_pct):.0f}%，持续跑输同类")
 
         # 2. 盈亏状态
+        high_loss = rec_config.get("high_loss_threshold", -0.20) if rec_config else -0.20
         if f.profit_pct > 0.3:
             reasons.append(f"持仓盈利{f.profit_pct*100:.1f}%，可考虑部分止盈")
         elif f.profit_pct > 0.1:
             score += 1
-        elif f.profit_pct < -0.2:
+        elif f.profit_pct < high_loss:
             score -= 1
             reasons.append(f"持仓亏损{abs(f.profit_pct)*100:.1f}%，需评估是否止损")
 
@@ -455,9 +506,10 @@ def _score_recommendations(
             reasons.append(f"年化波动率{f.volatility}%，波动较大")
 
         # 7. 集中度惩罚
+        conc_thresh = rec_config.get("concentration_threshold", 0.30) if rec_config else 0.30
         if overview.total_value > 0:
             weight = f.current_value / overview.total_value
-            if weight > 0.30:
+            if weight > conc_thresh:
                 score -= 1
                 risk_warnings.append(f"{f.name} 占组合{weight:.0%}，单一标的集中度风险高")
 
@@ -500,7 +552,7 @@ def _score_recommendations(
         if s.profit_pct > 0.3:
             score += 1
             reasons.append(f"持仓盈利{s.profit_pct*100:.1f}%，可考虑部分止盈")
-        elif s.profit_pct < -0.2:
+        elif s.profit_pct < high_loss:
             score -= 1
             reasons.append(f"持仓亏损{abs(s.profit_pct)*100:.1f}%")
 
@@ -528,7 +580,7 @@ def _score_recommendations(
         # 6. 集中度
         if overview.total_value > 0:
             weight = s.current_value / overview.total_value
-            if weight > 0.30:
+            if weight > conc_thresh:
                 score -= 1
                 risk_warnings.append(f"{s.name} 占组合{weight:.0%}，集中度风险高")
 
@@ -561,7 +613,7 @@ def _score_recommendations(
     sell_count = sum(1 for f in funds if f.recommendation == "卖出") + \
                  sum(1 for s in stocks if s.recommendation == "卖出")
     buy_count = sum(1 for f in funds if f.recommendation == "买入") + \
-                sum(1 for s in stocks if f.recommendation == "买入")
+                sum(1 for s in stocks if s.recommendation == "买入")
 
     if sell_count >= 2:
         summary = f"有 {sell_count} 只标的建议卖出，组合质量需要关注，建议优先处理表现最差的标的。"

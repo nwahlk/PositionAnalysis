@@ -209,8 +209,8 @@ def fetch_stock_data(code: str, cache_dir: str = ".cache",
 
 
 def fetch_all_data(snapshot, cache_dir: str = ".cache",
-                   max_age_hours: int = 4) -> tuple[list[FundMarketData], list[StockMarketData]]:
-    """获取快照中所有基金和股票的市场数据"""
+                   max_age_hours: int = 4) -> tuple[list[FundMarketData], list[StockMarketData], dict]:
+    """获取快照中所有基金和股票的市场数据，以及基准指数数据"""
     fund_data = []
     stock_data = []
 
@@ -238,4 +238,12 @@ def fetch_all_data(snapshot, cache_dir: str = ".cache",
                 price_history=pd.DataFrame(), pe=None, pb=None, industry=None,
             ))
 
-    return fund_data, stock_data
+    # 获取基准指数数据
+    benchmark_data = {}
+    try:
+        from pa.benchmark_fetcher import fetch_benchmark_data
+        benchmark_data = fetch_benchmark_data(cache_dir, days=120)
+    except Exception as e:
+        print(f"  警告: 获取基准指数数据失败: {e}")
+
+    return fund_data, stock_data, benchmark_data
