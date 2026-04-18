@@ -392,38 +392,60 @@ def generate_rebalance_actions(
     saa_target: AssetClassTarget,
     total_value: float,
     threshold: float = 0.05,
+    suggestions: dict[str, list[dict]] | None = None,
 ) -> list[str]:
-    """生成具体再平衡建议"""
+    """生成具体再平衡建议，包含推荐标的"""
     actions = []
+    suggestions = suggestions or {}
+
     labels = {
         "equity_pct": "权益类",
         "fixed_income_pct": "固收类",
         "cash_like_pct": "现金类",
         "alternative_pct": "另类",
     }
-    directions = {
-        "equity_pct": "股票型/混合型基金",
-        "fixed_income_pct": "债券型基金",
-        "cash_like_pct": "货币基金/存款/理财",
-        "alternative_pct": "商品/黄金",
+    # asset_class 字段名 → suggestions 中的 key
+    _suggestion_keys = {
+        "equity_pct": None,  # 权益类不推荐新增，只提示卖出
+        "fixed_income_pct": "fixed_income",
+        "cash_like_pct": "cash_like",
+        "alternative_pct": "alternative",
     }
 
     for field, label in labels.items():
         current = getattr(saa_current, field)
         target = getattr(saa_target, field)
         diff = current - target
-        if abs(diff) > threshold:
-            amount = abs(diff) * total_value
-            if diff > 0:
-                actions.append(
-                    f"{label}超配 {diff:.0%}（约 {_fmt_money(amount)}），"
-                    f"建议减少{directions[field]}持仓"
-                )
+        if abs(diff) <= threshold:
+            continue
+
+        amount = abs(diff) * total_value
+        if diff > 0:
+            # 超配 → 建议减少
+            hint = suggestions.get("equity_reduce_hint", "")
+            text = f"{label}超配 {diff:.0%}（约 {_fmt_money(amount)}），建议减少持仓"
+            if hint:
+                text += f"；{hint}"
+            actions.append(text)
+        else:
+            # 低配 → 建议增加 + 推荐标的
+            sug_key = _suggestion_keys.get(field)
+            text = f"{label}低配 {-diff:.0%}（约 {_fmt_money(amount)}），建议增加配置"
+
+            # 查找推荐标的
+            if sug_key and sug_key in suggestions:
+                pool = suggestions[sug_key]
+                if pool:
+                    picks = pool[:3]  # 最多推荐 3 只
+                    rec_text = "；推荐标的："
+                    rec_text += "、".join(
+                        f"{p['name']}（{p['code']}）" for p in picks
+                    )
+                    actions.append(text + rec_text)
+                else:
+                    actions.append(text)
             else:
-                actions.append(
-                    f"{label}低配 {-diff:.0%}（约 {_fmt_money(amount)}），"
-                    f"建议增加{directions[field]}配置"
-                )
+                actions.append(text)
 
     if not actions:
         actions.append("当前配置与目标偏差在阈值以内，无需再平衡")
@@ -566,8 +588,10 @@ def run_full_portfolio_analysis(
     all_weather = calc_all_weather_score(saa_deviation, correlation, risk_budget)
 
     # 8. 再平衡建议
+    fund_suggestions = (config or {}).get("fund_suggestions", {})
     rebalance_actions = generate_rebalance_actions(
-        saa_current, saa_target, overview.total_value, rebalance_threshold
+        saa_current, saa_target, overview.total_value, rebalance_threshold,
+        suggestions=fund_suggestions,
     )
 
     # 9. 价值信号

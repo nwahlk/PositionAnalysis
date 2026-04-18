@@ -27,6 +27,37 @@ recommendation:
   moderate_loss_threshold: -0.10
   concentration_threshold: 0.30
 
+# 再平衡推荐标的池（按资产类别分组，系统会自动排除已持有标的）
+fund_suggestions:
+  fixed_income:
+    - code: "003003"
+      name: "华夏现金增利货币A"
+      reason: "纯债基金，年化波动率低，适合固收底仓"
+    - code: "217022"
+      name: "招商产业债券A"
+      reason: "信用债代表，长期夏普比率 > 1"
+    - code: "005683"
+      name: "富国中证10年期国债ETF联接A"
+      reason: "利率债指数基金，与权益类低相关"
+    - code: "001171"
+      name: "工银双利债券A"
+      reason: "二级债基，攻守兼备"
+  alternative:
+    - code: "002610"
+      name: "博时黄金ETF联接C"
+      reason: "黄金是全天候核心对冲资产"
+    - code: "501018"
+      name: "南方原油LOF"
+      reason: "原油商品，通胀对冲"
+    - code: "159985"
+      name: "豆粕ETF"
+      reason: "农产品商品，与股债相关性低"
+  cash_like:
+    - code: "000198"
+      name: "天弘增利宝货币"
+      reason: "货币基金，流动性好"
+  equity_reduce_hint: "建议优先卖出同类排名后25%且建议'卖出'的标的"
+
 # 高级分析参数
 advanced:
   correlation_threshold: 0.80
