@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -9,6 +10,7 @@ from pathlib import Path
 
 import akshare as ak
 import pandas as pd
+import requests as _req
 import yaml
 
 
@@ -64,16 +66,112 @@ def _today_str() -> str:
     return datetime.now().strftime("%Y%m%d")
 
 
-def _retry(func, retries=2, delay=3):
-    """带重试的函数调用"""
+def _retry(func, retries=3, delay=5):
+    """带重试的函数调用，最后一次尝试绕过代理直连"""
+    import os
+    import urllib.request
+
     for attempt in range(retries + 1):
+        if attempt == retries:
+            # monkey-patch 让 requests 认为没有代理
+            _orig_getproxies = urllib.request.getproxies
+            urllib.request.getproxies = lambda: {}
+            os.environ["NO_PROXY"] = "*"
+            os.environ["no_proxy"] = "*"
+            print("  最后一次尝试，绕过代理直连...")
         try:
             return func()
         except Exception as e:
             if attempt == retries:
+                urllib.request.getproxies = _orig_getproxies
+                os.environ.pop("NO_PROXY", None)
+                os.environ.pop("no_proxy", None)
                 raise
             print(f"  请求失败，{delay}s 后重试 ({attempt+1}/{retries}): {e}")
             time.sleep(delay)
+
+    urllib.request.getproxies = _orig_getproxies
+    os.environ.pop("NO_PROXY", None)
+    os.environ.pop("no_proxy", None)
+
+
+def _find_latest_cache(cache_dir: str, prefix: str, code: str) -> Path | None:
+    """找缓存目录中该 prefix+code 最近的缓存文件（不限日期）"""
+    dir_path = Path(cache_dir)
+    if not dir_path.exists():
+        return None
+    candidates = sorted(
+        dir_path.glob(f"{prefix}_{code}_*.parquet"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
+
+def _load_stale_cache(cache_dir: str, prefix: str, code: str, data_type: str = "数据") -> pd.DataFrame | None:
+    """尝试加载最近的旧缓存，失败返回 None"""
+    stale = _find_latest_cache(cache_dir, prefix, code)
+    if stale:
+        mtime = datetime.fromtimestamp(stale.stat().st_mtime)
+        print(f"  网络失败，使用 {mtime.strftime('%m-%d %H:%M')} 的缓存{data_type}")
+        try:
+            return pd.read_parquet(stale)
+        except Exception:
+            pass
+    return None
+
+
+def _fetch_stock_sina(code: str, days: int = 90) -> pd.DataFrame:
+    """从新浪财经获取 A 股历史行情（备用数据源）"""
+    # 新浪需要 sh/sz 前缀
+    if code[0] == "6":
+        symbol = f"sh{code}"
+    else:
+        symbol = f"sz{code}"
+    r = _req.get(
+        "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData",
+        params={"symbol": symbol, "scale": "240", "ma": "no", "datalen": str(days)},
+        timeout=15,
+    )
+    r.raise_for_status()
+    data = json.loads(r.text)
+    if not data:
+        return pd.DataFrame()
+    df = pd.DataFrame(data)
+    # 转换为与 akshare 兼容的列名
+    df = df.rename(columns={
+        "day": "日期", "open": "开盘", "close": "收盘",
+        "high": "最高", "low": "最低", "volume": "成交量",
+    })
+    # 计算涨跌幅
+    df = df.sort_values("日期").reset_index(drop=True)
+    df["涨跌幅"] = df["收盘"].astype(float).pct_change(-1).fillna(0) * 100
+    df["涨跌幅"] = df["涨跌幅"].round(2)
+    return df
+
+
+def _fetch_hk_stock_tencent(code: str) -> pd.DataFrame:
+    """从腾讯财经获取港股实时行情（备用数据源），返回单行 DataFrame"""
+    # code 如 H03690 → 去掉 H 前缀
+    hk_code = code.lstrip("Hh")
+    r = _req.get(f"http://qt.gtimg.cn/q=hk{hk_code}", timeout=15)
+    r.raise_for_status()
+    text = r.text.strip()
+    # 格式: v_hk03690="字段~用~~分隔..."
+    if not text or "=" not in text:
+        return pd.DataFrame()
+    fields = text.split('"')[1].split("~")
+    if len(fields) < 40:
+        return pd.DataFrame()
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    close = float(fields[3])
+    prev_close = float(fields[4])
+    chg_pct = (close - prev_close) / prev_close * 100 if prev_close else 0.0
+    return pd.DataFrame([{
+        "日期": today_str, "开盘": float(fields[12]),
+        "收盘": close, "最高": float(fields[41]),
+        "最低": float(fields[42]), "涨跌幅": round(chg_pct, 2),
+    }])
 
 
 def fetch_fund_data(code: str, cache_dir: str = ".cache",
@@ -87,10 +185,15 @@ def fetch_fund_data(code: str, cache_dir: str = ".cache",
     if _is_cache_valid(nav_cache, max_age_hours):
         nav_history = pd.read_parquet(nav_cache)
     else:
-        nav_history = _retry(lambda: ak.fund_open_fund_info_em(
-            symbol=code, indicator="单位净值走势"
-        ))
-        nav_history.to_parquet(nav_cache)
+        try:
+            nav_history = _retry(lambda: ak.fund_open_fund_info_em(
+                symbol=code, indicator="单位净值走势"
+            ))
+            nav_history.to_parquet(nav_cache)
+        except Exception:
+            nav_history = _load_stale_cache(cache_dir, "fund_nav", code, "净值")
+            if nav_history is None:
+                nav_history = pd.DataFrame()
 
     # 最新净值
     if not nav_history.empty:
@@ -114,7 +217,8 @@ def fetch_fund_data(code: str, cache_dir: str = ".cache",
             ))
             rank_df.to_parquet(rank_cache)
         except Exception:
-            rank_df = pd.DataFrame()
+            stale = _load_stale_cache(cache_dir, "fund_rank", code, "排名")
+            rank_df = stale if stale is not None else pd.DataFrame()
     if not rank_df.empty:
         last_rank = rank_df.iloc[-1]
         rank_col = [c for c in rank_df.columns if "百分比" in c]
@@ -149,19 +253,34 @@ def fetch_stock_data(code: str, cache_dir: str = ".cache",
     if _is_cache_valid(price_cache, max_age_hours):
         price_history = pd.read_parquet(price_cache)
     else:
-        if _is_hk_stock(code):
-            # 港股：去掉 H 前缀，用数字代码
-            hk_code = code[1:]
-            price_history = _retry(lambda: ak.stock_hk_hist(
-                symbol=hk_code, period="daily",
-                start_date=start_date, end_date=end_date, adjust="qfq"
-            ))
-        else:
-            price_history = _retry(lambda: ak.stock_zh_a_hist(
-                symbol=code, period="daily",
-                start_date=start_date, end_date=end_date, adjust="qfq"
-            ))
-        price_history.to_parquet(price_cache)
+        try:
+            if _is_hk_stock(code):
+                # 港股：去掉 H 前缀，用数字代码
+                hk_code = code[1:]
+                price_history = _retry(lambda: ak.stock_hk_hist(
+                    symbol=hk_code, period="daily",
+                    start_date=start_date, end_date=end_date, adjust="qfq"
+                ))
+            else:
+                price_history = _retry(lambda: ak.stock_zh_a_hist(
+                    symbol=code, period="daily",
+                    start_date=start_date, end_date=end_date, adjust="qfq"
+                ))
+            price_history.to_parquet(price_cache)
+        except Exception:
+            price_history = _load_stale_cache(cache_dir, "stock_price", code, "行情")
+            if price_history is None:
+                # 最后手段：从备用数据源获取
+                try:
+                    if _is_hk_stock(code):
+                        price_history = _fetch_hk_stock_tencent(code)
+                        print(f"  使用腾讯财经备用数据源（港股）")
+                    else:
+                        price_history = _fetch_stock_sina(code)
+                        print(f"  使用新浪财经备用数据源（A股）")
+                except Exception as e2:
+                    print(f"  备用数据源也失败: {e2}")
+                    price_history = pd.DataFrame()
 
     # 最新价格
     current_price = 0.0
