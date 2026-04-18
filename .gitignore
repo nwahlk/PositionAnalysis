@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.cache/
+output/
+*.png
+.playwright-mcp/
+settings.local.json

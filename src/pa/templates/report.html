@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>持仓分析报告 {{ date }}</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f0f2f5;
+            color: #1a1a2e;
+            line-height: 1.6;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+        }
+        .header h1 { font-size: 28px; margin-bottom: 8px; }
+        .header .subtitle { opacity: 0.8; font-size: 14px; }
+
+        /* 概览卡片 */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .stat-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .stat-card .label { font-size: 13px; color: #666; margin-bottom: 4px; }
+        .stat-card .value { font-size: 24px; font-weight: 700; }
+        .stat-card .value.profit { color: #e74c3c; }
+        .stat-card .value.loss { color: #27ae60; }
+        .stat-card .sub { font-size: 12px; color: #999; margin-top: 4px; }
+
+        /* 通用区块 */
+        .section { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 24px; }
+        .section h3 { font-size: 16px; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 2px solid #f0f0f0; }
+
+        /* 组合建议 */
+        .advice-box {
+            background: #f8f9fa;
+            border-left: 4px solid #0f3460;
+            padding: 16px 20px;
+            border-radius: 0 8px 8px 0;
+            margin-bottom: 16px;
+        }
+        .advice-box .advice-summary { font-size: 15px; font-weight: 600; color: #1a1a2e; margin-bottom: 12px; }
+        .advice-box ul { list-style: none; padding: 0; }
+        .advice-box li { padding: 6px 0; font-size: 14px; color: #333; }
+        .advice-box li::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+        .advice-box .action-item::before { background: #e67e22; }
+        .advice-box .warning-item { color: #c0392b; }
+        .advice-box .warning-item::before { background: #c0392b; }
+        .advice-box .no-action { color: #27ae60; }
+        .advice-box .no-action::before { background: #27ae60; }
+
+        /* 表格 */
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #f8f9fa; padding: 10px 12px; text-align: left; font-size: 13px; font-weight: 600; color: #555; }
+        td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px; vertical-align: top; }
+        tr:hover { background: #fafbfc; }
+
+        .reason-cell {
+            max-width: 260px;
+            font-size: 12px;
+            color: #555;
+            line-height: 1.5;
+        }
+
+        /* 标签 */
+        .tag {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .tag-buy { background: #e8f5e9; color: #2e7d32; }
+        .tag-hold { background: #fff3e0; color: #e65100; }
+        .tag-sell { background: #ffebee; color: #c62828; }
+
+        .profit-text { color: #e74c3c; font-weight: 600; }
+        .loss-text { color: #27ae60; font-weight: 600; }
+
+        /* 图表区域 */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+        .chart-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .chart-card.full-width { grid-column: 1 / -1; }
+        .chart-card h3 {
+            font-size: 16px;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        @media (max-width: 768px) {
+            .charts-grid { grid-template-columns: 1fr; }
+            .stats-grid { grid-template-columns: 1fr 1fr; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <!-- 头部 -->
+    <div class="header">
+        <h1>持仓分析报告</h1>
+        <div class="subtitle">数据日期：{{ date }} | 生成时间：{{ gen_time }}</div>
+    </div>
+
+    <!-- 组合建议（核心内容，放在最前面） -->
+    <div class="section">
+        <h3>投资建议</h3>
+        <div class="advice-box">
+            <div class="advice-summary">{{ advice_summary }}</div>
+            {% if advice_actions %}
+            <ul>
+                {% for a in advice_actions %}
+                <li class="action-item">{{ a }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            {% if risk_warnings %}
+            <div style="margin-top: 12px;">
+                <ul>
+                    {% for w in risk_warnings %}
+                    <li class="warning-item">{{ w }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+            {% if not advice_actions and not risk_warnings %}
+            <ul>
+                <li class="no-action">当前无需操作，建议每月复查持仓</li>
+            </ul>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- 概览卡片 -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="label">总资产</div>
+            <div class="value">{{ total_value }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">总盈亏</div>
+            <div class="value {{ 'profit' if total_profit_raw >= 0 else 'loss' }}">
+                {{ total_profit }}
+            </div>
+            <div class="sub">{{ total_profit_pct }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">持仓分散度</div>
+            <div class="value">{{ diversification_score }}</div>
+            <div class="sub">{{ diversification_hint }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">资产数量</div>
+            <div class="value">{{ asset_count }}</div>
+            <div class="sub">{{ asset_detail }}</div>
+        </div>
+    </div>
+
+    <!-- 基金详情 -->
+    {% if funds %}
+    <div class="section">
+        <h3>基金持仓分析</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>代码</th><th>名称</th><th>盈亏</th><th>收益率</th><th>近1月</th><th>近3月</th>
+                    <th>排名</th><th>夏普</th><th>回撤</th><th>波动率</th><th>建议</th><th>分析理由</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for f in funds %}
+                <tr>
+                    <td>{{ f.code }}</td><td>{{ f.name }}</td>
+                    <td class="{{ 'profit-text' if f.profit >= 0 else 'loss-text' }}">{{ f.profit_str }}</td>
+                    <td class="{{ 'profit-text' if f.profit_pct >= 0 else 'loss-text' }}">{{ f.profit_pct_str }}</td>
+                    <td class="{{ 'profit-text' if f.ret_1m != '-' and f.ret_1m[0] == '+' else 'loss-text' }}">{{ f.ret_1m }}</td>
+                    <td class="{{ 'profit-text' if f.ret_3m != '-' and f.ret_3m[0] == '+' else 'loss-text' }}">{{ f.ret_3m }}</td>
+                    <td>{{ f.rank_pct_str }}</td>
+                    <td>{{ f.sharpe_str }}</td>
+                    <td>{{ f.max_drawdown_str }}</td>
+                    <td>{{ f.volatility }}</td>
+                    <td><span class="tag tag-{{ f.rec_class }}">{{ f.recommendation }}</span></td>
+                    <td class="reason-cell">{{ f.reason }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <!-- 股票详情 -->
+    {% if stocks %}
+    <div class="section">
+        <h3>股票持仓分析</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>代码</th><th>名称</th><th>盈亏</th><th>收益率</th><th>近1月</th><th>近3月</th>
+                    <th>RSI</th><th>PB</th><th>波动率</th><th>建议</th><th>分析理由</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in stocks %}
+                <tr>
+                    <td>{{ s.code }}</td><td>{{ s.name }}</td>
+                    <td class="{{ 'profit-text' if s.profit >= 0 else 'loss-text' }}">{{ s.profit_str }}</td>
+                    <td class="{{ 'profit-text' if s.profit_pct >= 0 else 'loss-text' }}">{{ s.profit_pct_str }}</td>
+                    <td class="{{ 'profit-text' if s.ret_1m != '-' and s.ret_1m[0] == '+' else 'loss-text' }}">{{ s.ret_1m }}</td>
+                    <td class="{{ 'profit-text' if s.ret_3m != '-' and s.ret_3m[0] == '+' else 'loss-text' }}">{{ s.ret_3m }}</td>
+                    <td>{{ s.rsi_str }}</td>
+                    <td>{{ s.pb_str }}</td>
+                    <td>{{ s.volatility }}</td>
+                    <td><span class="tag tag-{{ s.rec_class }}">{{ s.recommendation }}</span></td>
+                    <td class="reason-cell">{{ s.reason }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <!-- 图表（辅助信息，放在表格后面） -->
+    <div class="charts-grid">
+        <div class="chart-card">
+            <h3>资产配置</h3>
+            {{ allocation_chart|safe }}
+        </div>
+        <div class="chart-card">
+            <h3>盈亏分布</h3>
+            {{ pnl_chart|safe }}
+        </div>
+        <div class="chart-card full-width">
+            <h3>基金净值走势</h3>
+            {{ fund_trend_chart|safe }}
+        </div>
+        <div class="chart-card full-width">
+            <h3>股票价格走势</h3>
+            {{ stock_trend_chart|safe }}
+        </div>
+    </div>
+
+    <!-- 存款详情 -->
+    {% if deposits %}
+    <div class="section">
+        <h3>存款</h3>
+        <table>
+            <thead><tr><th>名称</th><th>金额</th><th>年化利率</th><th>到期日</th><th>到期本息</th></tr></thead>
+            <tbody>
+                {% for d in deposits %}
+                <tr>
+                    <td>{{ d.name }}</td><td>{{ d.amount_str }}</td><td>{{ d.rate_str }}</td>
+                    <td>{{ d.maturity }}</td><td>{{ d.total_str }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <!-- 理财详情 -->
+    {% if wealth %}
+    <div class="section">
+        <h3>理财产品</h3>
+        <table>
+            <thead><tr><th>名称</th><th>金额</th><th>年化利率</th><th>买入日</th><th>到期日</th><th>已持有天数</th><th>到期本息</th></tr></thead>
+            <tbody>
+                {% for w in wealth %}
+                <tr>
+                    <td>{{ w.name }}</td><td>{{ w.amount_str }}</td><td>{{ w.rate_str }}</td>
+                    <td>{{ w.buy_date }}</td><td>{{ w.maturity }}</td><td>{{ w.days_held }}</td>
+                    <td>{{ w.total_str }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <div style="text-align: center; color: #999; font-size: 12px; padding: 20px;">
+        本报告仅供参考，不构成投资建议。投资有风险，入市需谨慎。
+    </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# 数据目录（Obsidian vault 中的持仓文件目录）
+data_dir: "E:/连坤的知识库/01-Projects 当前进行中的项目/投资建议"
+# 报告输出目录（保存到 Obsidian 同目录）
+output_dir: "E:/连坤的知识库/01-Projects 当前进行中的项目/投资建议"
+# 缓存设置
+cache_dir: "./.cache"
+cache_max_age_hours: 4
+# 无风险利率（用于夏普比率计算）
+risk_free_rate: 0.015
+# 建议阈值
+recommendation:
+  high_loss_threshold: -0.20    # 亏损超过20%触发卖出审查
+  moderate_loss_threshold: -0.10
+  pe_overvalued_ratio: 1.5      # PE > 1.5x行业 -> 高估
+  pe_undervalued_ratio: 0.8     # PE < 0.8x行业 -> 低估
+  concentration_threshold: 0.30 # 单一资产 > 30% -> 降低集中度
